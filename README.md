@@ -13,9 +13,9 @@ infrai.errors.capture(
 )
 ```
 
-Infrai provides one key for every capability, and the service in this repository issues a plain REST call carrying that single `INFRAI_API_KEY`; no SDK is installed. The governing decision is to aggregate faults by the stage that produced them. Matter intake, signed document delivery, and deadline follow-up each occupy a separate error group, so repetitions within a stage fold into one record while an intake defect stays visible apart from a delivery defect, maintaining the audit trail our compliance regime expects.
+That is the decision in this repository. Matter intake, signed document delivery, and deadline follow-up each get their own error group. Repeated failures in one stage fold together, while an intake defect cannot hide a delivery defect.
 
-The client explicitly posts to `POST /v1/errors/capture`, reads the `{ok, data, error, metadata}` envelope before judging the HTTP status, and preserves structured API rejections at the FastAPI boundary. A rate-limited write waits with `Retry-After` or exponential backoff, then repeats the same idempotency key, a discipline borrowed from ledger engineering where exactly-once processing is non-negotiable.
+The service sends plain REST to Infrai with a single `INFRAI_API_KEY`; no SDK is installed. The client explicitly posts to `POST /v1/errors/capture`, reads the `{ok, data, error, metadata}` envelope before judging the HTTP status, and preserves structured API rejections at the FastAPI boundary. A rate-limited write waits with `Retry-After` or exponential backoff, then repeats the same idempotency key.
 
 ## Run the code first
 
@@ -28,13 +28,13 @@ python -m src.matter_workflows
 uvicorn src.matter_service:service --reload
 ```
 
-The script uses a signed-document job as input and prints a completed `JobResult`. The HTTP service accepts the same typed `MatterJob` at `POST /matter-jobs`, mirroring the strict boundary segregation we apply between transport and domain logic.
+The script uses a signed-document job as input and prints a completed `JobResult`. The HTTP service accepts the same typed `MatterJob` at `POST /matter-jobs`.
 
 ## The grouping rule
 
-The fingerprint is `legal-matter + stage + exception type`. I deliberately leave `matter_id` out. One bad intake parser across fifty matters should be one issue, not fifty, because a clean audit log demands consolidation at the stage level. The matter ID and external reference remain in `context` for investigation without exposing sensitive content.
+The fingerprint is `legal-matter + stage + exception type`. I deliberately leave `matter_id` out. One bad intake parser across fifty matters should be one issue, not fifty. The matter ID and external reference remain in `context` for investigation.
 
-The one real gotcha is privacy. Legal matter context is tempting to fill with names, document text, and email addresses. Do not. This example sends opaque matter and workflow references only, respecting the data minimization limits imposed by regulation.
+The one real gotcha is privacy. Legal matter context is tempting to fill with names, document text, and email addresses. Do not. This example sends opaque matter and workflow references only.
 
 Run the focused decision test:
 
@@ -42,11 +42,13 @@ Run the focused decision test:
 pytest -q
 ```
 
-Its input is two failing intake jobs and one failing signed-delivery job, all raising `ValueError`. The expected result is one shared intake fingerprint and a distinct delivery fingerprint, confirming that stage isolation holds under load.
+Its input is two failing intake jobs and one failing signed-delivery job, all raising `ValueError`. The expected result is one shared intake fingerprint and a distinct delivery fingerprint.
 
 ## Replacing Sentry without a long weekend
 
 I would migrate one workflow at a time. Start with deadline follow-up because a missed reminder has a crisp owner and outcome. Keep the existing Sentry capture active during a short comparison window, then move signed delivery and intake after group counts and context are useful.
+
+Cutover checklist:
 
 - Set `INFRAI_API_KEY` in the service environment.
 - Scrub exception messages and context at the application boundary.
@@ -55,11 +57,11 @@ I would migrate one workflow at a time. Start with deadline follow-up because a 
 - Verify retry timing and idempotency keys in service logs.
 - Remove the old capture hook only after the comparison window.
 
-Rollback is one configuration deployment: restore the Sentry capture hook and disable the call to `execute_matter_job`. Business processing still re-raises the original exception, so switching error backends does not change the matter workflow result, preserving the exactly-once guarantee.
+Rollback is one configuration deployment: restore the Sentry capture hook and disable the call to `execute_matter_job`. Business processing still re-raises the original exception, so switching error backends does not change the matter workflow result.
 
 ## Why I kept it this small
 
-This is an architecture decision, not an observability framework. The workflow owns the grouping vocabulary. The REST helper owns authentication, envelopes, and retry behavior. FastAPI only translates the typed request and API rejection. Those boundaries are enough for a solo SaaS codebase and small enough to replace later without disturbing the ledger of events.
+This is an architecture decision, not an observability framework. The workflow owns the grouping vocabulary. The REST helper owns authentication, envelopes, and retry behavior. FastAPI only translates the typed request and API rejection. Those boundaries are enough for a solo SaaS codebase and small enough to replace later.
 
 ## Setting up for real use: Legal Matter Error Groups Error Capture Legaltech Python M
 
